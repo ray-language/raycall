@@ -1,0 +1,112 @@
+// raycall — three microservices wired end to end: HTTP front → orders (RPC)
+// → inventory (RPC), with W3C trace propagation and cascading deadlines.
+import std/time;
+import inventory;
+import orders;
+import front;
+
+fn usage() {
+    eprint("usage:");
+    eprint("  raycall inventory [--port N]                       (default 7481)");
+    eprint("  raycall orders    [--port N] [--inventory-port N]  (default 7482)");
+    eprint("  raycall front     [--port N] [--orders-port N] [--inventory-port N]  (default 7480)");
+    eprint("  raycall demo      (the three of them in one process + sample requests)");
+    eprint("");
+    eprint("  HTTP: POST /orders {sku, qty}  ·  GET /stock/SKU  ·  X-Deadline-Ms header");
+}
+
+fn flag_int(av: [string], name: string, fallback: int) -> int {
+    var i = 0;
+    while (i + 1 < av.len()) {
+        if (av[i] == name) {
+            match (parse_int(av[i + 1])) {
+                Option.Some(n) => {
+                    return n;
+                },
+                Option.None => {
+                    return fallback;
+                },
+            }
+        }
+        i = i + 1;
+    }
+    fallback
+}
+
+pub fn boot_all(inv_port: int, ord_port: int, front_port: int) {
+    spawn(fn() {
+        inventory.serve(inv_port);
+    });
+    spawn(fn() {
+        orders.serve(ord_port, orders.Upstream { host: "127.0.0.1", port: inv_port });
+    });
+    spawn(fn() {
+        front.serve(
+            front_port,
+            front.FrontOpts {
+                orders_host: "127.0.0.1",
+                orders_port: ord_port,
+                inventory_host: "127.0.0.1",
+                inventory_port: inv_port
+            }
+        );
+    });
+    time.sleep(250);
+}
+
+fn main() -> int {
+    let av = args();
+    if (av.len() < 1 || av[0] == "--help" || av[0] == "-h") {
+        usage();
+        return if (av.len() < 1) { 1 } else { 0 };
+    }
+    let cmd = av[0];
+    if (cmd == "inventory") {
+        match (inventory.serve(flag_int(av, "--port", 7481))) {
+            Result.Ok(n) => 0,
+            Result.Err(e) => {
+                eprint("raycall: " + e);
+                1
+            },
+        }
+    } else if (cmd == "orders") {
+        match (orders.serve(
+    flag_int(av, "--port", 7482),
+    orders.Upstream { host: "127.0.0.1", port: flag_int(av, "--inventory-port", 7481) }
+)) {
+            Result.Ok(n) => 0,
+            Result.Err(e) => {
+                eprint("raycall: " + e);
+                1
+            },
+        }
+    } else if (cmd == "front") {
+        match (front.serve(
+    flag_int(av, "--port", 7480),
+    front.FrontOpts {
+        orders_host: "127.0.0.1",
+        orders_port: flag_int(av, "--orders-port", 7482),
+        inventory_host: "127.0.0.1",
+        inventory_port: flag_int(av, "--inventory-port", 7481)
+    }
+)) {
+            Result.Ok(n) => 0,
+            Result.Err(e) => {
+                eprint("raycall: " + e);
+                1
+            },
+        }
+    } else if (cmd == "demo") {
+        boot_all(7481, 7482, 7480);
+        eprint("raycall demo on http://127.0.0.1:7480 — try:");
+        eprint("  curl -s localhost:7480/stock/tornillo");
+        eprint("  curl -s -X POST localhost:7480/orders -d '{\"sku\":\"tornillo\",\"qty\":3}'");
+        match (recv(signals())) {
+            Option.Some(sig) => 0,
+            Option.None => 0,
+        }
+    } else {
+        usage();
+        1
+    }
+}

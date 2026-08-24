@@ -1,0 +1,7 @@
+[package]
+name = "raycall"
+version = "0.1.0"
+
+[dependencies]
+net = "path:../../raylang/packages/net"
+rpc = "path:../../raylang/packages/rpc"

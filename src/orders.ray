@@ -1,0 +1,101 @@
+// raycall — the orders service: the middle hop. Receives the caller's
+// deadline budget (rpc.Req.deadline_ms), spends part of it, and passes the
+// REMAINDER down to inventory — the cascade the M88 arc is about. The trace
+// travels as a child span per hop.
+import std/time;
+import std/resilience;
+import std/json;
+from std/json import Json;
+import std/uuid;
+import net/trace;
+import rpc/rpc;
+
+pub struct Upstream {
+    host: string,
+    port: int,
+}
+
+fn call_inventory(
+    up: Upstream,
+    method: string,
+    params: Json,
+    deadline_ms: int,
+    traceparent: string
+) -> Result<Json, string> {
+    let c = rpc.connect(up.host, up.port)?;
+    let out = rpc.call_full(c, method, params, deadline_ms, traceparent);
+    rpc.disconnect(c);
+    out
+}
+
+pub fn handle(up: Upstream, req: rpc.Req) -> Result<Json, string> {
+    if (req.method != "place_order") {
+        return Result.Err("unknown method: " + req.method);
+    }
+    let sku = match (json.get_string(req.params, "sku")) {
+        Option.Some(s) => s,
+        Option.None => {
+            return Result.Err("missing 'sku'");
+        },
+    };
+    let qty = match (json.get_int(req.params, "qty")) {
+        Option.Some(n) => n,
+        Option.None => {
+            return Result.Err("missing 'qty'");
+        },
+    };
+    if (qty <= 0) {
+        return Result.Err("qty must be positive");
+    }
+    // The budget that came in bounds what goes out: measure our own overhead
+    // against a Deadline and hand inventory only what is left.
+    let budget = if (req.deadline_ms > 0) { req.deadline_ms } else { 5000 };
+    let d = resilience.deadline(budget);
+    // The next hop gets a CHILD span of the incoming trace.
+    var child_tp = "";
+    match (trace.parse_traceparent(req.traceparent)) {
+        Option.Some(t) => {
+            child_tp = trace.traceparent(trace.child(t));
+        },
+        Option.None => { },
+    }
+    var params: Map<string, Json> = Map.new();
+    params.insert("sku", Json.JStr(sku));
+    params.insert("qty", Json.JNum(qty as float));
+    match (json.get_int(req.params, "slow_ms")) {
+        Option.Some(ms) => {
+            params.insert("slow_ms", Json.JNum(ms as float));
+        },
+        Option.None => { },
+    }
+    let left = resilience.remaining(d);
+    if (left <= 0) {
+        return Result.Err("deadline exceeded before calling inventory");
+    }
+    let res = call_inventory(up, "reserve", Json.JObject(params), left, child_tp)?;
+    let reserved = match (json.get_bool(res, "reserved")) {
+        Option.Some(b) => b,
+        Option.None => false,
+    };
+    if (!reserved) {
+        return Result.Err("insufficient stock for " + sku);
+    }
+    var m: Map<string, Json> = Map.new();
+    m.insert("order_id", Json.JStr(uuid.uuid_v7()));
+    m.insert("sku", Json.JStr(sku));
+    m.insert("qty", Json.JNum(qty as float));
+    match (json.get_string(res, "inventory_saw_trace")) {
+        Option.Some(seen) => {
+            m.insert("inventory_saw_trace", Json.JStr(seen));
+        },
+        Option.None => { },
+    }
+    m.insert("orders_saw_trace", Json.JStr(req.traceparent));
+    Result.Ok(Json.JObject(m))
+}
+
+pub fn serve(port: int, up: Upstream) -> Result<int, string> {
+    rpc.serve_graceful("127.0.0.1", port, 1000, fn(req: rpc.Req) -> Result<Json, string> {
+        handle(up, req)
+    })
+}

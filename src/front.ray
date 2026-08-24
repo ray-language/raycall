@@ -1,0 +1,127 @@
+// raycall — the HTTP front: adopts (or starts) the W3C trace, sets the
+// deadline budget, and translates RPC errors into honest status codes.
+// Responses carry the trace ids each hop saw, so a curl shows the whole
+// propagation chain.
+import std/resilience;
+import std/json;
+from std/json import Json;
+import net/webserver;
+import net/trace;
+import rpc/rpc;
+from net/log import logger, with_trace, info, warn, field, field_int, emit;
+
+pub struct FrontOpts {
+    orders_host: string,
+    orders_port: int,
+    inventory_host: string,
+    inventory_port: int,
+}
+
+fn call_rpc(
+    host: string,
+    port: int,
+    method: string,
+    params: Json,
+    deadline_ms: int,
+    traceparent: string
+) -> Result<Json, string> {
+    let c = rpc.connect(host, port)?;
+    let out = rpc.call_full(c, method, params, deadline_ms, traceparent);
+    rpc.disconnect(c);
+    out
+}
+
+fn err_response(t: trace.Trace, e: string) -> webserver.Response {
+    let status = if (e.contains("insufficient")) { 409 } else {
+        if (e.contains("timeout") || e.contains("deadline")) { 504 } else { 502 }
+    };
+    var m: Map<string, Json> = Map.new();
+    m.insert("error", Json.JStr(e));
+    m.insert("trace_id", Json.JStr(t.trace_id));
+    var resp = webserver.json_response(json.stringify(Json.JObject(m)));
+    resp.status = status;
+    resp
+}
+
+pub fn handle(opts: FrontOpts, req: webserver.Request) -> webserver.Response {
+    let t = webserver.trace_of(req);
+    let lg = with_trace(logger("raycall-front"), t.trace_id);
+    let deadline_ms = match (get(req.headers, "x-deadline-ms")) {
+        Option.Some(v) => {
+            match (parse_int(v)) {
+                Option.Some(n) => n,
+                Option.None => 2000,
+            }
+        },
+        Option.None => 2000,
+    };
+    let child_tp = trace.traceparent(trace.child(t));
+    if (req.method == "POST" && req.path == "/orders") {
+        let body = match (from_utf8(req.body)) {
+            Result.Ok(s) => s,
+            Result.Err(e) => "",
+        };
+        let params = match (json.parse(body)) {
+            Result.Ok(j) => j,
+            Result.Err(e) => {
+                return err_response(t, "bad json body");
+            },
+        };
+        match (call_rpc(
+    opts.orders_host,
+    opts.orders_port,
+    "place_order",
+    params,
+    deadline_ms,
+    child_tp
+)) {
+            Result.Ok(res) => {
+                emit(field(info(lg, "order placed"), "route", "/orders"));
+                var fallback: Map<string, Json> = Map.new();
+                var m = match (json.as_object(res)) {
+                    Option.Some(obj) => obj,
+                    Option.None => fallback,
+                };
+                m.insert("trace_id", Json.JStr(t.trace_id));
+                webserver.json_response(json.stringify(Json.JObject(m)))
+            },
+            Result.Err(e) => {
+                emit(field(warn(lg, "order failed"), "error", e));
+                err_response(t, e)
+            },
+        }
+    } else if (req.method == "GET" && req.path.starts_with("/stock/")) {
+        let sku = req.path.substring(7, req.path.len());
+        var params: Map<string, Json> = Map.new();
+        params.insert("sku", Json.JStr(sku));
+        match (call_rpc(
+    opts.inventory_host,
+    opts.inventory_port,
+    "get_stock",
+    Json.JObject(params),
+    deadline_ms,
+    child_tp
+)) {
+            Result.Ok(res) => {
+                var fallback: Map<string, Json> = Map.new();
+                var m = match (json.as_object(res)) {
+                    Option.Some(obj) => obj,
+                    Option.None => fallback,
+                };
+                m.insert("trace_id", Json.JStr(t.trace_id));
+                webserver.json_response(json.stringify(Json.JObject(m)))
+            },
+            Result.Err(e) => err_response(t, e),
+        }
+    } else if (req.path == "/health") {
+        webserver.ok("ok\n")
+    } else {
+        webserver.not_found()
+    }
+}
+
+pub fn serve(port: int, opts: FrontOpts) -> Result<int, string> {
+    webserver.serve_graceful("127.0.0.1", port, 1000, fn(req: webserver.Request) -> webserver.Response {
+        handle(opts, req)
+    })
+}

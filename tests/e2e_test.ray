@@ -1,0 +1,116 @@
+// End-to-end across three real services: order placed, stock decremented,
+// trace propagated through BOTH hops, deadline cascade cut short, honest
+// status codes. One @test (zombie listeners).
+import std/json;
+import net/http;
+import main;
+
+const FRONT: string = "http://127.0.0.1:18841";
+
+fn get_json(url: string) -> (int, json.Json) {
+    match (http.fetch(url)) {
+        Result.Ok(r) => {
+            let body = match (from_utf8(r.body)) {
+                Result.Ok(s) => s,
+                Result.Err(e) => panic(e),
+            };
+            match (json.parse(body)) {
+                Result.Ok(j) => {
+                    return (r.status, j);
+                },
+                Result.Err(e) => panic(e + ": " + body),
+            }
+        },
+        Result.Err(e) => panic(e),
+    }
+    panic("unreachable")
+}
+
+fn post_json(url: string, body: string, headers: Map<string, string>) -> (int, json.Json) {
+    match (http.request_bytes("POST", url, body.to_bytes(), headers, 10000)) {
+        Result.Ok(r) => {
+            let text = match (from_utf8(r.body)) {
+                Result.Ok(s) => s,
+                Result.Err(e) => panic(e),
+            };
+            match (json.parse(text)) {
+                Result.Ok(j) => {
+                    return (r.status, j);
+                },
+                Result.Err(e) => panic(e + ": " + text),
+            }
+        },
+        Result.Err(e) => panic(e),
+    }
+    panic("unreachable")
+}
+
+fn jstr(j: json.Json, k: string) -> string {
+    match (json.get_string(j, k)) {
+        Option.Some(s) => s,
+        Option.None => panic("missing '" + k + "' in " + json.stringify(j)),
+    }
+}
+
+@test
+fn microservices_end_to_end() {
+    main.boot_all(18843, 18842, 18841);
+
+    // Stock query crosses front → inventory.
+    let (s1, stock1) = get_json(FRONT + "/stock/tornillo");
+    assert_eq(s1, 200);
+    match (json.get_int(stock1, "stock")) {
+        Option.Some(n) => assert_eq(n, 100),
+        Option.None => panic("no stock"),
+    }
+
+    // Place an order WITH an explicit inbound traceparent: the SAME trace_id
+    // must be visible at the front, at orders, and at inventory (child spans
+    // per hop, same trace).
+    var h: Map<string, string> = Map.new();
+    h.insert("Content-Type", "application/json");
+    h.insert("traceparent", "00-aaaabbbbccccddddaaaabbbbccccdddd-1111222233334444-01");
+    let (s2, order) = post_json(FRONT + "/orders", "{\"sku\":\"tornillo\",\"qty\":3}", h);
+    assert_eq(s2, 200);
+    assert(jstr(order, "order_id").len() > 10);
+    assert_eq(jstr(order, "trace_id"), "aaaabbbbccccddddaaaabbbbccccdddd");
+    let orders_saw = jstr(order, "orders_saw_trace");
+    let inventory_saw = jstr(order, "inventory_saw_trace");
+    assert(orders_saw.contains("aaaabbbbccccddddaaaabbbbccccdddd"));
+    assert(inventory_saw.contains("aaaabbbbccccddddaaaabbbbccccdddd"));
+    // Child spans: each hop has a DIFFERENT span id.
+    assert(orders_saw != inventory_saw);
+    assert(!orders_saw.contains("1111222233334444"));
+
+    // The stock went down.
+    let (s3, stock2) = get_json(FRONT + "/stock/tornillo");
+    assert_eq(s3, 200);
+    match (json.get_int(stock2, "stock")) {
+        Option.Some(n) => assert_eq(n, 97),
+        Option.None => panic("no stock"),
+    }
+
+    // Insufficient stock → 409 with the reason.
+    var h2: Map<string, string> = Map.new();
+    h2.insert("Content-Type", "application/json");
+    let (s4, fail) = post_json(FRONT + "/orders", "{\"sku\":\"arandela\",\"qty\":1}", h2);
+    assert_eq(s4, 409);
+    assert(jstr(fail, "error").contains("insufficient"));
+
+    // Deadline cascade: inventory sleeps 800 ms but the whole budget is
+    // 250 ms → the orders→inventory call times out and the front says 504.
+    var h3: Map<string, string> = Map.new();
+    h3.insert("Content-Type", "application/json");
+    h3.insert("X-Deadline-Ms", "250");
+    let (s5, slow) = post_json(
+        FRONT + "/orders",
+        "{\"sku\":\"tuerca\",\"qty\":1,\"slow_ms\":800}",
+        h3
+    );
+    assert_eq(s5, 504);
+
+    // Unknown sku is a clean upstream error, not a hang.
+    let (s6, nope) = get_json(FRONT + "/stock/no-existe");
+    assert_eq(s6, 502);
+    assert(jstr(nope, "error").contains("unknown sku"));
+}

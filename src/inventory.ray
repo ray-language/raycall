@@ -1,0 +1,119 @@
+// raycall — the inventory service: the innermost hop. State in an actor,
+// RPC on top; every reply echoes the traceparent it SAW, so the end-to-end
+// test can prove the trace context crossed both hops intact.
+import std/time;
+import std/json;
+from std/json import Json;
+import rpc/rpc;
+
+pub enum Inv {
+    Stock(string, Channel<int>),
+    Reserve(string, int, Channel<bool>),
+}
+
+pub fn start_state() -> Channel<Inv> {
+    let ch: Channel<Inv> = Channel.bounded(64);
+    spawn(fn() {
+        var stock: Map<string, int> = Map.new();
+        stock.insert("tornillo", 100);
+        stock.insert("tuerca", 50);
+        stock.insert("arandela", 0);
+        var running = true;
+        while (running) {
+            match (recv(ch)) {
+                Option.None => {
+                    running = false;
+                },
+                Option.Some(msg) => {
+                    match (msg) {
+                        Inv.Stock(sku, reply) => {
+                            let n = match (get(stock, sku)) {
+                                Option.Some(x) => x,
+                                Option.None => 0 - 1,
+                            };
+                            send(reply, n);
+                        },
+                        Inv.Reserve(sku, qty, reply) => {
+                            match (get(stock, sku)) {
+                                Option.Some(have) => {
+                                    if (have >= qty) {
+                                        stock.insert(sku, have - qty);
+                                        send(reply, true);
+                                    } else {
+                                        send(reply, false);
+                                    }
+                                },
+                                Option.None => {
+                                    send(reply, false);
+                                },
+                            }
+                        },
+                    }
+                },
+            }
+        }
+    });
+    ch
+}
+
+fn jnum(n: int) -> Json {
+    Json.JNum(n as float)
+}
+
+pub fn handle(state: Channel<Inv>, req: rpc.Req) -> Result<Json, string> {
+    let sku = match (json.get_string(req.params, "sku")) {
+        Option.Some(s) => s,
+        Option.None => {
+            return Result.Err("missing 'sku'");
+        },
+    };
+    if (req.method == "get_stock") {
+        let reply: Channel<int> = Channel.bounded(1);
+        send(state, Inv.Stock(sku, reply));
+        let n = match (recv(reply)) {
+            Option.Some(x) => x,
+            Option.None => 0 - 1,
+        };
+        if (n < 0) {
+            return Result.Err("unknown sku: " + sku);
+        }
+        var m: Map<string, Json> = Map.new();
+        m.insert("sku", Json.JStr(sku));
+        m.insert("stock", jnum(n));
+        m.insert("inventory_saw_trace", Json.JStr(req.traceparent));
+        Result.Ok(Json.JObject(m))
+    } else if (req.method == "reserve") {
+        let qty = match (json.get_int(req.params, "qty")) {
+            Option.Some(n) => n,
+            Option.None => {
+                return Result.Err("missing 'qty'");
+            },
+        };
+        // Test hook: pretend the warehouse is slow (deadline-cascade drills).
+        match (json.get_int(req.params, "slow_ms")) {
+            Option.Some(ms) => {
+                time.sleep(ms);
+            },
+            Option.None => { },
+        }
+        let reply: Channel<bool> = Channel.bounded(1);
+        send(state, Inv.Reserve(sku, qty, reply));
+        let ok = match (recv(reply)) {
+            Option.Some(b) => b,
+            Option.None => false,
+        };
+        var m: Map<string, Json> = Map.new();
+        m.insert("reserved", Json.JBool(ok));
+        m.insert("inventory_saw_trace", Json.JStr(req.traceparent));
+        Result.Ok(Json.JObject(m))
+    } else {
+        Result.Err("unknown method: " + req.method)
+    }
+}
+
+pub fn serve(port: int) -> Result<int, string> {
+    let state = start_state();
+    rpc.serve_graceful("127.0.0.1", port, 1000, fn(req: rpc.Req) -> Result<Json, string> {
+        handle(state, req)
+    })
+}
