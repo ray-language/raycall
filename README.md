@@ -1,6 +1,6 @@
 # raycall
 
-Microservicios de demostración **conectados de verdad**, escritos en [raylang](https://github.com/roberto-ayala/raylang): un front HTTP (`net/webserver`) delante de dos servicios `packages/rpc` (orders → inventory), con el arco M88 completo en acción — **trace W3C propagado de punta a punta** (un span hijo por salto), **deadlines en cascada** (el presupuesto del cliente se recorta en cada hop), logs JSON estampados con el `trace_id` entrante, y códigos de estado honestos (409 sin stock, 504 deadline, 502 upstream).
+Microservicios de demostración **conectados de verdad**, escritos en [raylang](https://github.com/ray-language/raylang): un front HTTP (`net/webserver`) delante de dos servicios `packages/rpc` (orders → inventory), con el arco M88 completo en acción — **trace W3C propagado de punta a punta** (un span hijo por salto), **deadlines en cascada** (el presupuesto del cliente se recorta en cada hop), logs JSON estampados con el `trace_id` entrante, y códigos de estado honestos (409 sin stock, 504 deadline, 502 upstream).
 
 ```text
 $ raycall demo
