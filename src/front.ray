@@ -11,24 +11,24 @@ import rpc/rpc;
 from net/log import logger, with_trace, info, warn, field, field_int, emit;
 
 pub struct FrontOpts {
+    orders_pool: rpc.Pool,
+    inventory_pool: rpc.Pool,
     orders_host: string,
     orders_port: int,
     inventory_host: string,
     inventory_port: int,
 }
 
+// Pool de conexiones (raylang M127): antes era conexion-por-llamada — el hueco de produccion
+// que este dogfood anoto. El pool reusa, aparca al agotarse y reconecta solo tras un timeout.
 fn call_rpc(
-    host: string,
-    port: int,
+    pool: rpc.Pool,
     method: string,
     params: Json,
     deadline_ms: int,
     traceparent: string
 ) -> Result<Json, string> {
-    let c = rpc.connect(host, port)?;
-    let out = rpc.call_full(c, method, params, deadline_ms, traceparent);
-    rpc.disconnect(c);
-    out
+    rpc.pool_call_full(pool, method, params, deadline_ms, traceparent)
 }
 
 fn err_response(t: trace.Trace, e: string) -> webserver.Response {
@@ -67,14 +67,7 @@ pub fn handle(opts: FrontOpts, req: webserver.Request) -> webserver.Response {
                 return err_response(t, "bad json body");
             },
         };
-        match (call_rpc(
-    opts.orders_host,
-    opts.orders_port,
-    "place_order",
-    params,
-    deadline_ms,
-    child_tp
-)) {
+        match (call_rpc(opts.orders_pool, "place_order", params, deadline_ms, child_tp)) {
             Result.Ok(res) => {
                 emit(field(info(lg, "order placed"), "route", "/orders"));
                 var fallback: Map<string, Json> = Map.new();
@@ -95,8 +88,7 @@ pub fn handle(opts: FrontOpts, req: webserver.Request) -> webserver.Response {
         var params: Map<string, Json> = Map.new();
         params.insert("sku", Json.JStr(sku));
         match (call_rpc(
-    opts.inventory_host,
-    opts.inventory_port,
+    opts.inventory_pool,
     "get_stock",
     Json.JObject(params),
     deadline_ms,
