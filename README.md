@@ -52,10 +52,9 @@ Anotados en `raylang/IDEAS.md` §72:
 1. **El arco M88 compone entero y a la primera**: rpc (deadline_ms +
    traceparent en el frame) + trace (child por salto) + log (with_trace) +
    resilience (deadline) encajan sin fricción entre tres procesos.
-2. **Conexión RPC por petición**: el cliente rpc es secuencial por conexión;
-   handlers concurrentes no pueden compartir uno (se desincroniza) → cada
-   llamada conecta/desconecta. Un pool o multiplexación por id es el hueco
-   de producción de `packages/rpc` (su README ya insinúa streaming diferido).
+2. **[RESUELTO — raylang M127]** Conexión RPC por petición: `rpc.pool`
+   existe y los tres saltos (front→orders→inventory) van por pools de 8
+   conexiones — reuso, backpressure y reconexión automática tras timeout.
 3. `grpc_client` queda como la última superficie de red sin dogfood (necesita
    un servicio gRPC externo real).
 

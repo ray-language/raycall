@@ -1,6 +1,7 @@
 // raycall — three microservices wired end to end: HTTP front → orders (RPC)
 // → inventory (RPC), with W3C trace propagation and cascading deadlines.
 import std/time;
+import rpc/rpc;
 import inventory;
 import orders;
 import front;
@@ -38,12 +39,21 @@ pub fn boot_all(inv_port: int, ord_port: int, front_port: int) {
         inventory.serve(inv_port);
     });
     spawn(fn() {
-        orders.serve(ord_port, orders.Upstream { host: "127.0.0.1", port: inv_port });
+        orders.serve(
+            ord_port,
+            orders.Upstream {
+                pool: rpc.pool("127.0.0.1", inv_port, 8),
+                host: "127.0.0.1",
+                port: inv_port
+            }
+        );
     });
     spawn(fn() {
         front.serve(
             front_port,
             front.FrontOpts {
+                orders_pool: rpc.pool("127.0.0.1", ord_port, 8),
+                inventory_pool: rpc.pool("127.0.0.1", inv_port, 8),
                 orders_host: "127.0.0.1",
                 orders_port: ord_port,
                 inventory_host: "127.0.0.1",
@@ -72,7 +82,11 @@ fn main() -> int {
     } else if (cmd == "orders") {
         match (orders.serve(
     flag_int(av, "--port", 7482),
-    orders.Upstream { host: "127.0.0.1", port: flag_int(av, "--inventory-port", 7481) }
+    orders.Upstream {
+        pool: rpc.pool("127.0.0.1", flag_int(av, "--inventory-port", 7481), 8),
+        host: "127.0.0.1",
+        port: flag_int(av, "--inventory-port", 7481)
+    }
 )) {
             Result.Ok(n) => 0,
             Result.Err(e) => {
@@ -84,6 +98,8 @@ fn main() -> int {
         match (front.serve(
     flag_int(av, "--port", 7480),
     front.FrontOpts {
+        orders_pool: rpc.pool("127.0.0.1", flag_int(av, "--orders-port", 7482), 8),
+        inventory_pool: rpc.pool("127.0.0.1", flag_int(av, "--inventory-port", 7481), 8),
         orders_host: "127.0.0.1",
         orders_port: flag_int(av, "--orders-port", 7482),
         inventory_host: "127.0.0.1",

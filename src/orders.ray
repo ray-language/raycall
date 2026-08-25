@@ -11,10 +11,12 @@ import net/trace;
 import rpc/rpc;
 
 pub struct Upstream {
+    pool: rpc.Pool,
     host: string,
     port: int,
 }
 
+// Pool de conexiones (raylang M127) en vez de conexion-por-llamada.
 fn call_inventory(
     up: Upstream,
     method: string,
@@ -22,10 +24,7 @@ fn call_inventory(
     deadline_ms: int,
     traceparent: string
 ) -> Result<Json, string> {
-    let c = rpc.connect(up.host, up.port)?;
-    let out = rpc.call_full(c, method, params, deadline_ms, traceparent);
-    rpc.disconnect(c);
-    out
+    rpc.pool_call_full(up.pool, method, params, deadline_ms, traceparent)
 }
 
 pub fn handle(up: Upstream, req: rpc.Req) -> Result<Json, string> {
