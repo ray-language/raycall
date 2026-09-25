@@ -2,7 +2,6 @@
 // deadline budget (rpc.Req.deadline_ms), spends part of it, and passes the
 // REMAINDER down to inventory — the cascade the M88 arc is about. The trace
 // travels as a child span per hop.
-import std/time;
 import std/resilience;
 import std/json;
 from std/json import Json;
@@ -12,11 +11,9 @@ import rpc/rpc;
 
 pub struct Upstream {
     pool: rpc.Pool,
-    host: string,
-    port: int,
 }
 
-// Pool de conexiones (raylang M127) en vez de conexion-por-llamada.
+// Pooled RPC (rpc.pool) instead of one connection per call.
 fn call_inventory(
     up: Upstream,
     method: string,
@@ -51,43 +48,30 @@ pub fn handle(up: Upstream, req: rpc.Req) -> Result<Json, string> {
     let budget = if (req.deadline_ms > 0) { req.deadline_ms } else { 5000 };
     let d = resilience.deadline(budget);
     // The next hop gets a CHILD span of the incoming trace.
-    var child_tp = "";
-    match (trace.parse_traceparent(req.traceparent)) {
-        Option.Some(t) => {
-            child_tp = trace.traceparent(trace.child(t));
-        },
-        Option.None => { },
-    }
+    let child_tp = match (trace.parse_traceparent(req.traceparent)) {
+        Option.Some(t) => trace.traceparent(trace.child(t)),
+        Option.None => "",
+    };
     var params: Map<string, Json> = Map.new();
     params.insert("sku", Json.JStr(sku));
     params.insert("qty", Json.JNum(qty as float));
-    match (json.get_int(req.params, "slow_ms")) {
-        Option.Some(ms) => {
-            params.insert("slow_ms", Json.JNum(ms as float));
-        },
-        Option.None => { },
+    if let Option.Some(ms) = json.get_int(req.params, "slow_ms") {
+        params.insert("slow_ms", Json.JNum(ms as float));
     }
     let left = resilience.remaining(d);
     if (left <= 0) {
         return Result.Err("deadline exceeded before calling inventory");
     }
     let res = call_inventory(up, "reserve", Json.JObject(params), left, child_tp)?;
-    let reserved = match (json.get_bool(res, "reserved")) {
-        Option.Some(b) => b,
-        Option.None => false,
-    };
-    if (!reserved) {
+    if (!json.get_bool(res, "reserved").unwrap_or(false)) {
         return Result.Err("insufficient stock for " + sku);
     }
     var m: Map<string, Json> = Map.new();
     m.insert("order_id", Json.JStr(uuid.uuid_v7()));
     m.insert("sku", Json.JStr(sku));
     m.insert("qty", Json.JNum(qty as float));
-    match (json.get_string(res, "inventory_saw_trace")) {
-        Option.Some(seen) => {
-            m.insert("inventory_saw_trace", Json.JStr(seen));
-        },
-        Option.None => { },
+    if let Option.Some(seen) = json.get_string(res, "inventory_saw_trace") {
+        m.insert("inventory_saw_trace", Json.JStr(seen));
     }
     m.insert("orders_saw_trace", Json.JStr(req.traceparent));
     Result.Ok(Json.JObject(m))

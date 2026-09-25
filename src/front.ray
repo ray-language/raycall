@@ -2,7 +2,6 @@
 // deadline budget, and translates RPC errors into honest status codes.
 // Responses carry the trace ids each hop saw, so a curl shows the whole
 // propagation chain.
-import std/resilience;
 import std/json;
 from std/json import Json;
 import net/webserver;
@@ -13,14 +12,10 @@ from net/log import logger, with_trace, info, warn, field, field_int, emit;
 pub struct FrontOpts {
     orders_pool: rpc.Pool,
     inventory_pool: rpc.Pool,
-    orders_host: string,
-    orders_port: int,
-    inventory_host: string,
-    inventory_port: int,
 }
 
-// Pool de conexiones (raylang M127): antes era conexion-por-llamada — el hueco de produccion
-// que este dogfood anoto. El pool reusa, aparca al agotarse y reconecta solo tras un timeout.
+// Pooled RPC (rpc.pool): connections are reused, a caller parks when the pool
+// is exhausted, and a connection reconnects on its own after a failed call.
 fn call_rpc(
     pool: rpc.Pool,
     method: string,
@@ -32,8 +27,12 @@ fn call_rpc(
 }
 
 fn err_response(t: trace.Trace, e: string) -> webserver.Response {
-    let status = if (e.contains("insufficient")) { 409 } else {
-        if (e.contains("timeout") || e.contains("deadline")) { 504 } else { 502 }
+    let status = if (e.contains("insufficient")) {
+        409
+    } else if (e.contains("timeout") || e.contains("deadline")) {
+        504
+    } else {
+        502
     };
     var m: Map<string, Json> = Map.new();
     m.insert("error", Json.JStr(e));
@@ -46,21 +45,13 @@ fn err_response(t: trace.Trace, e: string) -> webserver.Response {
 pub fn handle(opts: FrontOpts, req: webserver.Request) -> webserver.Response {
     let t = webserver.trace_of(req);
     let lg = with_trace(logger("raycall-front"), t.trace_id);
-    let deadline_ms = match (get(req.headers, "x-deadline-ms")) {
-        Option.Some(v) => {
-            match (parse_int(v)) {
-                Option.Some(n) => n,
-                Option.None => 2000,
-            }
-        },
+    let deadline_ms = match (req.headers.get("x-deadline-ms")) {
+        Option.Some(v) => parse_int(v).unwrap_or(2000),
         Option.None => 2000,
     };
     let child_tp = trace.traceparent(trace.child(t));
     if (req.method == "POST" && req.path == "/orders") {
-        let body = match (from_utf8(req.body)) {
-            Result.Ok(s) => s,
-            Result.Err(e) => "",
-        };
+        let body = from_utf8(req.body).unwrap_or("");
         let params = match (json.parse(body)) {
             Result.Ok(j) => j,
             Result.Err(e) => {
@@ -70,11 +61,7 @@ pub fn handle(opts: FrontOpts, req: webserver.Request) -> webserver.Response {
         match (call_rpc(opts.orders_pool, "place_order", params, deadline_ms, child_tp)) {
             Result.Ok(res) => {
                 emit(field(info(lg, "order placed"), "route", "/orders"));
-                var fallback: Map<string, Json> = Map.new();
-                var m = match (json.as_object(res)) {
-                    Option.Some(obj) => obj,
-                    Option.None => fallback,
-                };
+                var m = json.as_object(res).unwrap_or(Map.new());
                 m.insert("trace_id", Json.JStr(t.trace_id));
                 webserver.json_response(json.stringify(Json.JObject(m)))
             },
@@ -95,11 +82,7 @@ pub fn handle(opts: FrontOpts, req: webserver.Request) -> webserver.Response {
             child_tp
         )) {
             Result.Ok(res) => {
-                var fallback: Map<string, Json> = Map.new();
-                var m = match (json.as_object(res)) {
-                    Option.Some(obj) => obj,
-                    Option.None => fallback,
-                };
+                var m = json.as_object(res).unwrap_or(Map.new());
                 m.insert("trace_id", Json.JStr(t.trace_id));
                 webserver.json_response(json.stringify(Json.JObject(m)))
             },

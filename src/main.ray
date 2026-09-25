@@ -39,25 +39,14 @@ pub fn boot_all(inv_port: int, ord_port: int, front_port: int) {
         inventory.serve(inv_port);
     });
     spawn(fn() {
-        orders.serve(
-            ord_port,
-            orders.Upstream {
-                pool: rpc.pool("127.0.0.1", inv_port, 8),
-                host: "127.0.0.1",
-                port: inv_port
-            }
-        );
+        orders.serve(ord_port, orders.Upstream { pool: rpc.pool("127.0.0.1", inv_port, 8) });
     });
     spawn(fn() {
         front.serve(
             front_port,
             front.FrontOpts {
                 orders_pool: rpc.pool("127.0.0.1", ord_port, 8),
-                inventory_pool: rpc.pool("127.0.0.1", inv_port, 8),
-                orders_host: "127.0.0.1",
-                orders_port: ord_port,
-                inventory_host: "127.0.0.1",
-                inventory_port: inv_port
+                inventory_pool: rpc.pool("127.0.0.1", inv_port, 8)
             }
         );
     });
@@ -83,9 +72,7 @@ fn main() -> int {
         match (orders.serve(
             flag_int(av, "--port", 7482),
             orders.Upstream {
-                pool: rpc.pool("127.0.0.1", flag_int(av, "--inventory-port", 7481), 8),
-                host: "127.0.0.1",
-                port: flag_int(av, "--inventory-port", 7481)
+                pool: rpc.pool("127.0.0.1", flag_int(av, "--inventory-port", 7481), 8)
             }
         )) {
             Result.Ok(n) => 0,
@@ -99,11 +86,7 @@ fn main() -> int {
             flag_int(av, "--port", 7480),
             front.FrontOpts {
                 orders_pool: rpc.pool("127.0.0.1", flag_int(av, "--orders-port", 7482), 8),
-                inventory_pool: rpc.pool("127.0.0.1", flag_int(av, "--inventory-port", 7481), 8),
-                orders_host: "127.0.0.1",
-                orders_port: flag_int(av, "--orders-port", 7482),
-                inventory_host: "127.0.0.1",
-                inventory_port: flag_int(av, "--inventory-port", 7481)
+                inventory_pool: rpc.pool("127.0.0.1", flag_int(av, "--inventory-port", 7481), 8)
             }
         )) {
             Result.Ok(n) => 0,
@@ -117,10 +100,8 @@ fn main() -> int {
         eprint("raycall demo on http://127.0.0.1:7480 — try:");
         eprint("  curl -s localhost:7480/stock/tornillo");
         eprint("  curl -s -X POST localhost:7480/orders -d '{\"sku\":\"tornillo\",\"qty\":3}'");
-        match (recv(signals())) {
-            Option.Some(sig) => 0,
-            Option.None => 0,
-        }
+        recv(signals());
+        0
     } else {
         usage();
         1
