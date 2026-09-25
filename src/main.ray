@@ -81,13 +81,13 @@ fn main() -> int {
         }
     } else if (cmd == "orders") {
         match (orders.serve(
-    flag_int(av, "--port", 7482),
-    orders.Upstream {
-        pool: rpc.pool("127.0.0.1", flag_int(av, "--inventory-port", 7481), 8),
-        host: "127.0.0.1",
-        port: flag_int(av, "--inventory-port", 7481)
-    }
-)) {
+            flag_int(av, "--port", 7482),
+            orders.Upstream {
+                pool: rpc.pool("127.0.0.1", flag_int(av, "--inventory-port", 7481), 8),
+                host: "127.0.0.1",
+                port: flag_int(av, "--inventory-port", 7481)
+            }
+        )) {
             Result.Ok(n) => 0,
             Result.Err(e) => {
                 eprint("raycall: " + e);
@@ -96,16 +96,16 @@ fn main() -> int {
         }
     } else if (cmd == "front") {
         match (front.serve(
-    flag_int(av, "--port", 7480),
-    front.FrontOpts {
-        orders_pool: rpc.pool("127.0.0.1", flag_int(av, "--orders-port", 7482), 8),
-        inventory_pool: rpc.pool("127.0.0.1", flag_int(av, "--inventory-port", 7481), 8),
-        orders_host: "127.0.0.1",
-        orders_port: flag_int(av, "--orders-port", 7482),
-        inventory_host: "127.0.0.1",
-        inventory_port: flag_int(av, "--inventory-port", 7481)
-    }
-)) {
+            flag_int(av, "--port", 7480),
+            front.FrontOpts {
+                orders_pool: rpc.pool("127.0.0.1", flag_int(av, "--orders-port", 7482), 8),
+                inventory_pool: rpc.pool("127.0.0.1", flag_int(av, "--inventory-port", 7481), 8),
+                orders_host: "127.0.0.1",
+                orders_port: flag_int(av, "--orders-port", 7482),
+                inventory_host: "127.0.0.1",
+                inventory_port: flag_int(av, "--inventory-port", 7481)
+            }
+        )) {
             Result.Ok(n) => 0,
             Result.Err(e) => {
                 eprint("raycall: " + e);
