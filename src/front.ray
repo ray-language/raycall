@@ -88,12 +88,12 @@ pub fn handle(opts: FrontOpts, req: webserver.Request) -> webserver.Response {
         var params: Map<string, Json> = Map.new();
         params.insert("sku", Json.JStr(sku));
         match (call_rpc(
-    opts.inventory_pool,
-    "get_stock",
-    Json.JObject(params),
-    deadline_ms,
-    child_tp
-)) {
+            opts.inventory_pool,
+            "get_stock",
+            Json.JObject(params),
+            deadline_ms,
+            child_tp
+        )) {
             Result.Ok(res) => {
                 var fallback: Map<string, Json> = Map.new();
                 var m = match (json.as_object(res)) {
