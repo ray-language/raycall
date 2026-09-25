@@ -1,0 +1,36 @@
+// The inventory handler over its state actor, without sockets.
+import std/json;
+from std/json import Json;
+import rpc/rpc;
+import inventory;
+
+fn req(method: string, sku: string, qty: int) -> rpc.Req {
+    var m: Map<string, Json> = Map.new();
+    m.insert("sku", Json.JStr(sku));
+    m.insert("qty", Json.JNum(qty as float));
+    rpc.Req { method: method, params: Json.JObject(m), deadline_ms: 0, traceparent: "tp" }
+}
+
+@test
+fn stock_and_reservations_follow_the_actor_state() {
+    let st = inventory.start_state();
+    match (inventory.handle(st, req("get_stock", "tuerca", 0))) {
+        Result.Ok(j) => assert_eq(json.get_int(j, "stock").unwrap_or(-1), 50),
+        Result.Err(e) => panic(e),
+    }
+    match (inventory.handle(st, req("get_stock", "no-such", 0))) {
+        Result.Ok(j) => panic("unexpected stock for an unknown sku"),
+        Result.Err(e) => assert(e.contains("unknown sku")),
+    }
+    let reserved = fn(sku: string, qty: int) -> bool {
+        match (inventory.handle(st, req("reserve", sku, qty))) {
+            Result.Ok(j) => json.get_bool(j, "reserved").unwrap_or(false),
+            Result.Err(e) => panic(e),
+        }
+    };
+    assert(reserved("tuerca", 30));
+    assert(!reserved("tuerca", 30));
+    assert(reserved("tuerca", 20));
+    assert(!reserved("arandela", 1));
+    assert(!reserved("no-such", 1));
+}

@@ -41,7 +41,7 @@ o juntos en uno (`raycall demo`).
 | Deadline en cascada (504 en el salto correcto) | ✅ |
 | Códigos honestos: 409/502/504 + logs JSON con trace_id | ✅ |
 | Binario nativo (demo verificada con curl) | ✅ |
-| Tests (E2E completo con 3 servicios reales) | ✅ 1 |
+| Tests (E2E completo con 3 servicios reales + actor de inventario) | ✅ 2 |
 | Pata gRPC real (`grpc_client` contra un servicio externo) | 📋 v2 — sin dogfood aún |
 | Métricas por servicio, retry entre servicios | 📋 v2 |
 
@@ -59,6 +59,10 @@ Anotados en `raylang/IDEAS.md` §72:
    un servicio gRPC externo real).
 
 ## Desarrollo
+
+Requiere raylang ≥ 1.27; `net` y `rpc` vienen del índice de paquetes
+(`net = "^0.3.3"`, `rpc = "^0.1.0"` en `ray.toml`, versiones exactas fijadas
+en `ray.lock`).
 
 ```sh
 ray test

@@ -7,7 +7,7 @@ from std/json import Json;
 import rpc/rpc;
 
 pub enum Inv {
-    Stock(string, Channel<int>),
+    Stock(string, Channel<Option<int>>),
     Reserve(string, int, Channel<bool>),
 }
 
@@ -18,35 +18,23 @@ pub fn start_state() -> Channel<Inv> {
         stock.insert("tornillo", 100);
         stock.insert("tuerca", 50);
         stock.insert("arandela", 0);
-        var running = true;
-        while (running) {
+        while (true) {
             match (recv(ch)) {
                 Option.None => {
-                    running = false;
+                    break;
                 },
                 Option.Some(msg) => {
                     match (msg) {
                         Inv.Stock(sku, reply) => {
-                            let n = match (get(stock, sku)) {
-                                Option.Some(x) => x,
-                                Option.None => 0 - 1,
-                            };
-                            send(reply, n);
+                            send(reply, stock.get(sku));
                         },
                         Inv.Reserve(sku, qty, reply) => {
-                            match (get(stock, sku)) {
-                                Option.Some(have) => {
-                                    if (have >= qty) {
-                                        stock.insert(sku, have - qty);
-                                        send(reply, true);
-                                    } else {
-                                        send(reply, false);
-                                    }
-                                },
-                                Option.None => {
-                                    send(reply, false);
-                                },
+                            let have = stock.get_or(sku, 0);
+                            let ok = stock.contains_key(sku) && have >= qty;
+                            if (ok) {
+                                stock.insert(sku, have - qty);
                             }
+                            send(reply, ok);
                         },
                     }
                 },
@@ -68,15 +56,14 @@ pub fn handle(state: Channel<Inv>, req: rpc.Req) -> Result<Json, string> {
         },
     };
     if (req.method == "get_stock") {
-        let reply: Channel<int> = Channel.bounded(1);
+        let reply: Channel<Option<int>> = Channel.bounded(1);
         send(state, Inv.Stock(sku, reply));
         let n = match (recv(reply)) {
-            Option.Some(x) => x,
-            Option.None => 0 - 1,
+            Option.Some(Option.Some(x)) => x,
+            _ => {
+                return Result.Err("unknown sku: " + sku);
+            },
         };
-        if (n < 0) {
-            return Result.Err("unknown sku: " + sku);
-        }
         var m: Map<string, Json> = Map.new();
         m.insert("sku", Json.JStr(sku));
         m.insert("stock", jnum(n));
@@ -90,18 +77,12 @@ pub fn handle(state: Channel<Inv>, req: rpc.Req) -> Result<Json, string> {
             },
         };
         // Test hook: pretend the warehouse is slow (deadline-cascade drills).
-        match (json.get_int(req.params, "slow_ms")) {
-            Option.Some(ms) => {
-                time.sleep(ms);
-            },
-            Option.None => { },
+        if let Option.Some(ms) = json.get_int(req.params, "slow_ms") {
+            time.sleep(ms);
         }
         let reply: Channel<bool> = Channel.bounded(1);
         send(state, Inv.Reserve(sku, qty, reply));
-        let ok = match (recv(reply)) {
-            Option.Some(b) => b,
-            Option.None => false,
-        };
+        let ok = recv(reply).unwrap_or(false);
         var m: Map<string, Json> = Map.new();
         m.insert("reserved", Json.JBool(ok));
         m.insert("inventory_saw_trace", Json.JStr(req.traceparent));
