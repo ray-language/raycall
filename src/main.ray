@@ -1,6 +1,6 @@
 // raycall — three microservices wired end to end: HTTP front → orders (RPC)
 // → inventory (RPC), with W3C trace propagation and cascading deadlines.
-import std/time;
+import std/net;
 import rpc/rpc;
 import inventory;
 import orders;
@@ -34,23 +34,35 @@ fn flag_int(av: [string], name: string, fallback: int) -> int {
     fallback
 }
 
-pub fn boot_all(inv_port: int, ord_port: int, front_port: int) {
+// The three services in one process, each on a listener already bound (pass
+// `net.tcp_listen("127.0.0.1", 0)` for ephemeral ports): the services are
+// reachable as soon as this returns, no startup sleep needed.
+pub fn boot_on(inv_l: int, ord_l: int, front_l: int) {
+    let inv_port = net.local_port(inv_l);
+    let ord_port = net.local_port(ord_l);
     spawn(fn() {
-        inventory.serve(inv_port);
+        inventory.serve_on(inv_l);
     });
     spawn(fn() {
-        orders.serve(ord_port, orders.Upstream { pool: rpc.pool("127.0.0.1", inv_port, 8) });
+        orders.serve_on(ord_l, orders.Upstream { pool: rpc.pool("127.0.0.1", inv_port, 8) });
     });
     spawn(fn() {
-        front.serve(
-            front_port,
+        front.serve_on(
+            front_l,
             front.FrontOpts {
                 orders_pool: rpc.pool("127.0.0.1", ord_port, 8),
                 inventory_pool: rpc.pool("127.0.0.1", inv_port, 8)
             }
         );
     });
-    time.sleep(250);
+}
+
+pub fn boot_all(inv_port: int, ord_port: int, front_port: int) -> Result<int, string> {
+    let inv_l = net.tcp_listen("127.0.0.1", inv_port)?;
+    let ord_l = net.tcp_listen("127.0.0.1", ord_port)?;
+    let front_l = net.tcp_listen("127.0.0.1", front_port)?;
+    boot_on(inv_l, ord_l, front_l);
+    Result.Ok(front_port)
 }
 
 fn main() -> int {
@@ -96,7 +108,10 @@ fn main() -> int {
             },
         }
     } else if (cmd == "demo") {
-        boot_all(7481, 7482, 7480);
+        if let Result.Err(e) = boot_all(7481, 7482, 7480) {
+            eprint("raycall: " + e);
+            return 1;
+        }
         eprint("raycall demo on http://127.0.0.1:7480 — try:");
         eprint("  curl -s localhost:7480/stock/tornillo");
         eprint("  curl -s -X POST localhost:7480/orders -d '{\"sku\":\"tornillo\",\"qty\":3}'");

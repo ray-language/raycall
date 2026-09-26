@@ -100,3 +100,10 @@ pub fn serve(port: int, opts: FrontOpts) -> Result<int, string> {
         handle(opts, req)
     })
 }
+
+// Like `serve`, on a listener the caller already opened (webserver.serve_on).
+pub fn serve_on(listener: int, opts: FrontOpts) -> Result<int, string> {
+    webserver.serve_on(listener, fn(req: webserver.Request) -> webserver.Response {
+        handle(opts, req)
+    })
+}
