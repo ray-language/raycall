@@ -98,3 +98,12 @@ pub fn serve(port: int) -> Result<int, string> {
         handle(state, req)
     })
 }
+
+// Like `serve`, on a listener the caller already opened (rpc.serve_on, rpc
+// 0.1.1+): tests pass `net.tcp_listen(host, 0)` for an ephemeral port.
+pub fn serve_on(listener: int) -> Result<int, string> {
+    let state = start_state();
+    rpc.serve_on(listener, fn(req: rpc.Req) -> Result<Json, string> {
+        handle(state, req)
+    })
+}

@@ -3,12 +3,12 @@
 
 [net]
 url = "https://github.com/ray-language/net"
-ref = "v0.3.5"
-commit = "f531ec16365f52604173a8f65bb74d371085750f"
-hash = "sha256:4c240e2ce0d10daad18efde57670c62fab5e28b50bc8265fd1c76e6afb80f776"
+ref = "v0.3.7"
+commit = "12322b84081c3c47b92ca40a8f50bf97d84cf2e1"
+hash = "sha256:2e153df8f3b905a1d67d98a9d00377da81e0ad4b914ead7b21ff9728f7801958"
 
 [rpc]
 url = "https://github.com/ray-language/rpc"
-ref = "v0.1.0"
-commit = "5d84b61491715531a8fcdce2832b91c105e3d900"
-hash = "sha256:3d6e69ea71cf4e4a4930337e20bf41438e208f40d7e1edf4200348b17c1fe049"
+ref = "v0.1.3"
+commit = "d808725192898896073a5122e88e6121a47b6468"
+hash = "sha256:de7208f967368b0eff2db084c33642786c596426aa513715381190d7609b0251"

@@ -82,3 +82,10 @@ pub fn serve(port: int, up: Upstream) -> Result<int, string> {
         handle(up, req)
     })
 }
+
+// Like `serve`, on a listener the caller already opened (rpc.serve_on).
+pub fn serve_on(listener: int, up: Upstream) -> Result<int, string> {
+    rpc.serve_on(listener, fn(req: rpc.Req) -> Result<Json, string> {
+        handle(up, req)
+    })
+}
