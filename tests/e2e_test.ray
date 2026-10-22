@@ -56,7 +56,8 @@ fn jstr(j: json.Json, k: string) -> string {
 fn microservices_end_to_end() {
     // All three services on ephemeral ports (rpc/webserver serve_on).
     let front_l = listen_ephemeral();
-    main.boot_on(listen_ephemeral(), listen_ephemeral(), front_l);
+    // Test hooks on: the deadline drill below makes the inventory sleep.
+    main.boot_on(listen_ephemeral(), listen_ephemeral(), front_l, true);
     let base = "http://127.0.0.1:" + to_string(net.local_port(front_l));
 
     // Stock query crosses front → inventory.

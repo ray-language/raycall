@@ -48,7 +48,15 @@ fn jnum(n: int) -> Json {
     Json.JNum(n as float)
 }
 
+/// Handles one call with the test hooks off.
 pub fn handle(state: Channel<Inv>, req: rpc.Req) -> Result<Json, string> {
+    handle_with(state, req, false)
+}
+
+/// Handles one call; `hooks` honours the `slow_ms` test hook (deadline
+/// drills). Off in production: the param comes from the public front's
+/// request body, and on it any client could park the warehouse.
+pub fn handle_with(state: Channel<Inv>, req: rpc.Req, hooks: bool) -> Result<Json, string> {
     let sku = match (json.get_string(req.params, "sku")) {
         Option.Some(s) => s,
         Option.None => {
@@ -77,8 +85,10 @@ pub fn handle(state: Channel<Inv>, req: rpc.Req) -> Result<Json, string> {
             },
         };
         // Test hook: pretend the warehouse is slow (deadline-cascade drills).
-        if let Option.Some(ms) = json.get_int(req.params, "slow_ms") {
-            time.sleep(ms);
+        if (hooks) {
+            if let Option.Some(ms) = json.get_int(req.params, "slow_ms") {
+                time.sleep(ms);
+            }
         }
         let reply: Channel<bool> = Channel.bounded(1);
         send(state, Inv.Reserve(sku, qty, reply));
@@ -92,18 +102,18 @@ pub fn handle(state: Channel<Inv>, req: rpc.Req) -> Result<Json, string> {
     }
 }
 
-pub fn serve(port: int) -> Result<int, string> {
+pub fn serve(port: int, hooks: bool) -> Result<int, string> {
     let state = start_state();
     rpc.serve_graceful("127.0.0.1", port, 1000, fn(req: rpc.Req) -> Result<Json, string> {
-        handle(state, req)
+        handle_with(state, req, hooks)
     })
 }
 
 // Like `serve`, on a listener the caller already opened (rpc.serve_on, rpc
 // 0.1.1+): tests pass `net.tcp_listen(host, 0)` for an ephemeral port.
-pub fn serve_on(listener: int) -> Result<int, string> {
+pub fn serve_on(listener: int, hooks: bool) -> Result<int, string> {
     let state = start_state();
     rpc.serve_on(listener, fn(req: rpc.Req) -> Result<Json, string> {
-        handle(state, req)
+        handle_with(state, req, hooks)
     })
 }
