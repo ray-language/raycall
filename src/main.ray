@@ -8,7 +8,7 @@ import front;
 
 fn usage() {
     eprint("usage:");
-    eprint("  raycall inventory [--port N]                       (default 7481)");
+    eprint("  raycall inventory [--port N] [--test-hooks]        (default 7481)");
     eprint("  raycall orders    [--port N] [--inventory-port N]  (default 7482)");
     eprint("  raycall front     [--port N] [--orders-port N] [--inventory-port N]  (default 7480)");
     eprint("  raycall demo      (the three of them in one process + sample requests)");
@@ -37,11 +37,12 @@ fn flag_int(av: [string], name: string, fallback: int) -> int {
 // The three services in one process, each on a listener already bound (pass
 // `net.tcp_listen("127.0.0.1", 0)` for ephemeral ports): the services are
 // reachable as soon as this returns, no startup sleep needed.
-pub fn boot_on(inv_l: int, ord_l: int, front_l: int) {
+// `hooks` turns on the inventory's test hooks (see inventory.handle_with).
+pub fn boot_on(inv_l: int, ord_l: int, front_l: int, hooks: bool) {
     let inv_port = net.local_port(inv_l);
     let ord_port = net.local_port(ord_l);
     spawn(fn() {
-        inventory.serve_on(inv_l);
+        inventory.serve_on(inv_l, hooks);
     });
     spawn(fn() {
         orders.serve_on(ord_l, orders.Upstream { pool: rpc.pool("127.0.0.1", inv_port, 8) });
@@ -61,7 +62,7 @@ pub fn boot_all(inv_port: int, ord_port: int, front_port: int) -> Result<int, st
     let inv_l = net.tcp_listen("127.0.0.1", inv_port)?;
     let ord_l = net.tcp_listen("127.0.0.1", ord_port)?;
     let front_l = net.tcp_listen("127.0.0.1", front_port)?;
-    boot_on(inv_l, ord_l, front_l);
+    boot_on(inv_l, ord_l, front_l, false);
     Result.Ok(front_port)
 }
 
@@ -73,7 +74,7 @@ fn main() -> int {
     }
     let cmd = av[0];
     if (cmd == "inventory") {
-        match (inventory.serve(flag_int(av, "--port", 7481))) {
+        match (inventory.serve(flag_int(av, "--port", 7481), av.contains("--test-hooks"))) {
             Result.Ok(n) => 0,
             Result.Err(e) => {
                 eprint("raycall: " + e);

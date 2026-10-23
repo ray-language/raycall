@@ -2,6 +2,7 @@
 import std/json;
 from std/json import Json;
 import rpc/rpc;
+import std/time;
 import inventory;
 
 fn req(method: string, sku: string, qty: int) -> rpc.Req {
@@ -33,4 +34,25 @@ fn stock_and_reservations_follow_the_actor_state() {
     assert(reserved("tuerca", 20));
     assert(!reserved("arandela", 1));
     assert(!reserved("no-such", 1));
+}
+
+fn slow_reserve(ms: int) -> rpc.Req {
+    var m: Map<string, Json> = Map.new();
+    m.insert("sku", Json.JStr("tuerca"));
+    m.insert("qty", Json.JNum(1.0));
+    m.insert("slow_ms", Json.JNum(ms as float));
+    rpc.Req { method: "reserve", params: Json.JObject(m), deadline_ms: 0, traceparent: "tp" }
+}
+
+@test
+fn the_slow_ms_hook_only_works_when_turned_on() {
+    let st = inventory.start_state();
+    let t0 = time.now();
+    inventory.handle(st, slow_reserve(400));
+    let off = time.now() - t0;
+    let t1 = time.now();
+    inventory.handle_with(st, slow_reserve(400), true);
+    let on = time.now() - t1;
+    assert_eq_msg(off < 200, true, "hooks off took ${off} ms");
+    assert_eq_msg(on >= 400, true, "hooks on took ${on} ms");
 }

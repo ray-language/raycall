@@ -21,6 +21,9 @@ curl, sin colector.
   el presupuesto en `rpc.Req.deadline_ms`, mide su propio gasto con
   `resilience.deadline` y pasa SOLO el resto a inventory; un almacén que
   tarda 800 ms muere en el salto correcto y el front responde 504 (test).
+  La lentitud la provoca el parámetro `slow_ms`, un gancho de pruebas que el
+  inventario solo atiende si arranca con `--test-hooks` (el test lo activa);
+  sin él lo ignora, porque llega del cuerpo de la petición pública.
 - **Trace por salto**: `webserver.trace_of` adopta el traceparent entrante,
   cada `rpc.call_full` viaja con un span HIJO, y `net/log.with_trace` estampa
   cada línea. El test verifica el mismo trace_id en los tres servicios y
